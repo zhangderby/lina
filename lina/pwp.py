@@ -18,7 +18,33 @@ def run_pwp_bp(sysi,
                use='J', jacobian=None, model=None, 
                plot=False,
                plot_est=False):
-    Ndh = int(dark_mask.sum())
+    """_summary_
+
+    Parameters
+    ----------
+    sysi : _type_
+        _description_
+    dark_mask : _type_
+        _description_
+    probes : _type_
+        _description_
+    use : str, optional
+        _description_, by default 'J'
+    jacobian : _type_, optional
+        _description_, by default None
+    model : _type_, optional
+        _description_, by default None
+    plot : bool, optional
+        _description_, by default False
+    plot_est : bool, optional
+        _description_, by default False
+
+    Returns
+    -------
+    _type_
+        _description_
+    """
+    Nmask = int(dark_mask.sum())
     
     dm_ref = sysi.get_dm()
     amps = np.linspace(-1, 1, 2) # for generating a negative and positive probe
@@ -40,25 +66,30 @@ def run_pwp_bp(sysi,
         if plot:
             imshows.imshow3(Ip[i], In[i], Ip[i]-In[i], lognorm1=True, lognorm2=True, pxscl=sysi.psf_pixelscale_lamD)
             
-    E_probes = xp.zeros((probes.shape[0], 2*Ndh))
-    I_diff = xp.zeros((probes.shape[0], Ndh))
+    E_probes = xp.zeros((probes.shape[0], 2*Nmask))
+    I_diff = xp.zeros((probes.shape[0], Nmask))
     for i in range(len(probes)):
         if (use=='jacobian' or use.lower()=='j') and jacobian is not None:
-            E_probe = jacobian.dot(xp.array(probes[i][sysi.dm_mask])) 
+            E_probe = jacobian.dot(xp.array(probes[i][sysi.dm_mask.astype(bool)]))
             E_probe = E_probe[::2] + 1j*E_probe[1::2]
         elif (use=='model' or use=='m') and model is not None:
-            if i==0: E_full = model.calc_psf().wavefront.get()[dark_mask]
+            if i==0: 
+                E_full = model.calc_psf()[dark_mask]
                 
             model.add_dm(probes[i])
-            E_full_probe = model.calc_psf().wavefront.get()[dark_mask]
+            E_full_probe = model.calc_psf()[dark_mask]
             model.add_dm(-probes[i])
             
             E_probe = E_full_probe - E_full
+            # print(type(E_probe))
             
         if plot:
-            E_probe_2d = xp.zeros((sysi.npsf,sysi.npsf), dtype=np.complex128)
+            E_probe_2d = xp.zeros((sysi.npsf,sysi.npsf), dtype=xp.complex128)
+            # print(xp)
+            # print(type(E_probe_2d), type(dark_mask))
             xp.place(E_probe_2d, mask=dark_mask, vals=E_probe)
-            imshows.imshow2(xp.abs(E_probe_2d), xp.angle(E_probe_2d))
+            imshows.imshow2(xp.abs(E_probe_2d), xp.angle(E_probe_2d),
+                            f'Probe {i+1}: '+'$|E_{probe}|$', f'Probe {i+1}: '+r'$\angle E_{probe}$')
             
         E_probes[i, ::2] = E_probe.real
         E_probes[i, 1::2] = E_probe.imag
@@ -66,8 +97,8 @@ def run_pwp_bp(sysi,
         I_diff[i:(i+1), :] = (Ip[i] - In[i])[dark_mask]
     
     # Use batch process to estimate each pixel individually
-    E_est = xp.zeros(Ndh, dtype=xp.complex128)
-    for i in range(Ndh):
+    E_est = xp.zeros(Nmask, dtype=xp.complex128)
+    for i in range(Nmask):
         delI = I_diff[:, i]
         M = 4*xp.array([E_probes[:,2*i], E_probes[:,2*i + 1]]).T
         Minv = xp.linalg.pinv(M.T@M, 1e-2)@M.T
@@ -80,7 +111,9 @@ def run_pwp_bp(sysi,
     xp.place(E_est_2d, mask=dark_mask, vals=E_est)
     
     if plot or plot_est:
-        imshows.imshow2(xp.abs(E_est_2d), xp.angle(E_est_2d), lognorm1=True, pxscl=sysi.psf_pixelscale_lamD)
+        imshows.imshow2(xp.abs(E_est_2d)**2, xp.angle(E_est_2d), 
+                        'Estimated Intensity', 'Estimated Phase',
+                        lognorm1=True, pxscl=sysi.psf_pixelscale_lamD)
     return E_est_2d
 
 def run_pwp_redmond(sysi, dark_mask, 
@@ -138,7 +171,8 @@ def run_pwp_redmond(sysi, dark_mask,
         E_probe_2d = np.zeros((sysi.npsf,sysi.npsf), dtype=np.complex128)
         np.place(E_probe_2d, mask=dark_mask, 
                  vals=E_probes[i*2*nmask : (i+1)*2*nmask ][:nmask] + 1j*E_probes[i*2*nmask : (i+1)*2*nmask ][nmask:])
-        misc.myimshow2(np.abs(E_probe_2d), np.angle(E_probe_2d), 'E_probe Amp', 'E_probe Phase')
+        if display:
+            misc.myimshow2(np.abs(E_probe_2d), np.angle(E_probe_2d), 'E_probe Amp', 'E_probe Phase')
         
     B = np.diag(np.ones((nmask,2*nmask))[0], k=0)[:nmask,:2*nmask] + np.diag(np.ones((nmask,2*nmask))[0], k=nmask)[:nmask,:2*nmask]
     misc.myimshow(B, figsize=(10,4))
